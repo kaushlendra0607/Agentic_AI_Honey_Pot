@@ -1,40 +1,47 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import List, Optional, Any, Union
 
 # --- SUB-MODELS ---
 
 class Message(BaseModel):
+    # Ignore extra fields like 'id' or 'metadata' inside message
+    model_config = ConfigDict(extra='ignore') 
+    
     sender: str = Field(
         ..., 
-        description="Identifies who sent the message.",
-        json_schema_extra={"example": "scammer"}
+        description="Identifies who sent the message (scammer/user)."
     )
     text: str = Field(
         ..., 
-        description="The actual content of the message.",
-        json_schema_extra={"example": "Your account is blocked. Verify now."}
+        description="The actual content of the message."
     )
-    timestamp: str = Field(
+    
+    # Accept String OR Int, but describe it clearly
+    timestamp: Union[str, int, float] = Field(
         ..., 
-        description="ISO-8601 timestamp string.",
-        json_schema_extra={"example": "2026-01-21T10:15:30Z"}
+        description="Timestamp (accepts ISO string or Unix epoch)."
     )
 
+    # Validator to force numbers into strings so your code doesn't break
+    @field_validator('timestamp', mode='before')
+    def convert_timestamp_to_string(cls, v):
+        return str(v)
+
 class Metadata(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    
+    # ✅ FIX: Use 'default=' explicitly to satisfy the Type Checker
     channel: Optional[str] = Field(
         default="SMS", 
-        description="Communication medium.",
-        json_schema_extra={"example": "WhatsApp"}
+        description="Communication medium (SMS, WhatsApp, etc)."
     )
     language: Optional[str] = Field(
         default="English", 
-        description="Language code.",
-        json_schema_extra={"example": "English"}
+        description="Language code."
     )
     locale: Optional[str] = Field(
         default="IN", 
-        description="Region locale.",
-        json_schema_extra={"example": "IN"}
+        description="Region locale (e.g., IN)."
     )
 
 class EngagementMetrics(BaseModel):
@@ -66,26 +73,31 @@ class ExtractedIntelligence(BaseModel):
     )
     suspiciousKeywords: List[str] = Field(
         default_factory=list, 
-        description="Scam triggers, Gift Card codes, Crypto addresses."
+        description="Scam triggers detected."
     )
 
 # --- MAIN REQUEST ---
 class HoneypotRequest(BaseModel):
+    model_config = ConfigDict(extra='ignore') # CRITICAL: Guvi sends extra stuff
+
     sessionId: str = Field(
         ..., 
-        description="Unique Session ID provided by the platform.",
-        json_schema_extra={"example": "wertyu-dfghj-ertyui"}
+        description="Unique Session ID provided by the platform."
     )
     message: Message = Field(
         ..., 
         description="The latest message object."
     )
-    conversationHistory: List[Message] = Field(
+    
+    # Handle Missing Key AND Null value gracefully
+    conversationHistory: Optional[List[Message]] = Field(
         default_factory=list, 
-        description="List of all previous messages."
+        description="History of chat. Defaults to empty list."
     )
+    
+    # ✅ FIX: Use lambda to silence the "Argument type" error
     metadata: Optional[Metadata] = Field(
-        default=None, 
+        default_factory=lambda: Metadata(),
         description="Optional context."
     )
 
@@ -93,16 +105,12 @@ class HoneypotRequest(BaseModel):
 class HoneypotResponse(BaseModel):
     status: str = Field(
         ..., 
-        description="API status.", 
-        json_schema_extra={"example": "success"}
+        description="API status (Section 8 compliant)."
     )
     reply: str = Field(
         ..., 
-        description="The AI Agent's response.",
-        json_schema_extra={"example": "Why is my account blocked?"}
+        description="The AI Agent's response."
     )
-    
-    # Optional Fields
     scamDetected: Optional[bool] = Field(
         default=None, 
         description="True if scam detected."
