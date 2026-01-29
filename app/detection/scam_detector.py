@@ -1,8 +1,4 @@
-from google import genai  # <--- NEW IMPORT
-from dotenv import load_dotenv
-from groq import Groq
 from app.core.llm import llm
-
 
 
 # 2. Hardcoded Patterns
