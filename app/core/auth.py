@@ -12,7 +12,7 @@ def verify_api_key(x_api_key: str = Header(...)):
     """
     # 2. Get the real secret from .env
     # If the variable is missing, this defaults to None (security failsafe)
-    required_key = os.getenv("x-api-key")
+    required_key = os.getenv("MY_SECRET_KEY")
     
     # 3. Check the match
     if x_api_key != required_key:
