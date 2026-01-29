@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 from datetime import datetime
 from datetime import timezone
 
-# i_mport Pydantic Models for safe data handling
 from app.models.schemas import (
     HoneypotRequest, 
     HoneypotResponse, 
@@ -27,10 +26,16 @@ async def honeypot_endpoint(payload: HoneypotRequest):
     # 1. Get Session
     session = get_or_create_session(payload.sessionId)
 
-    # 2. Update Memory (CRITICAL FIX: Save the text so Agent sees it!)
+    # If our memory is empty but they sent history, restore it.
+    if len(session["messages"]) == 0 and len(payload.conversationHistory) > 0:
+        for old_msg in payload.conversationHistory:
+            session["messages"].append(old_msg.dict())
+        session["messageCount"] = len(payload.conversationHistory)
+
+    # 2. Add the New Message
     session["messages"].append(payload.message.dict())
     session["messageCount"] += 1
-    session["last_user_message"] = payload.message.text  # <--- FIXED: Agent needs this
+    session["last_user_message"] = payload.message.text
 
     # 3. Scam Detection
     if not session["scamDetected"]:
@@ -39,31 +44,27 @@ async def honeypot_endpoint(payload: HoneypotRequest):
             session["scamDetected"] = True
             session["intelligence"]["suspiciousKeywords"].extend(keywords)
 
-    # 4. Extract Intelligence (Bank accounts, UPIs)
+    # 4. Extract Intelligence
     intel = extract_intelligence(payload.message.text)
     for key, values in intel.items():
-        # Ensure the key exists in session intel before appending
         if key in session["intelligence"]:
             for value in values:
                 if value not in session["intelligence"][key]:
                     session["intelligence"][key].append(value)
 
-    # 5. Calculate Metrics (Dynamic now, not hardcoded!)
+    # 5. Calculate Metrics
     duration = int((datetime.now(timezone.utc) - session["startTime"]).total_seconds())
     
-    # Create the Metrics Object safely
     metrics_obj = EngagementMetrics(
         engagementDurationSeconds=duration,
         totalMessagesExchanged=session["messageCount"]
     )
 
-    # 6. Generate Agent Reply (Only if it's a scam)
-    agent_reply = "Processing..."
-    if session["scamDetected"]:
-        agent_reply = generate_agent_reply(session)
+    # 6. Generate Agent Reply (ALWAYS REPLY)
+    # No "if scamDetected" check anymore. We always talk.
+    agent_reply = generate_agent_reply(session)
 
-    # 7. GUVI Callback (Report to Hackathon Dashboard)
-    # We report if we found intel OR if the conversation is getting long
+    # 7. GUVI Callback
     should_report = (
         session["scamDetected"] 
         and not session.get("reported", False)
@@ -71,32 +72,17 @@ async def honeypot_endpoint(payload: HoneypotRequest):
     )
 
     if should_report:
-        report_payload = {
-            "sessionId": session["sessionId"],
-            "scamDetected": True,
-            "totalMessagesExchanged": session["messageCount"],
-            "extractedIntelligence": session["intelligence"],
-            "agentNotes": "Scammer engaged. Payment details extracted.",
-        }
         await send_report(session, duration, session["messageCount"])
         session["reported"] = True
 
-    # 8. Return Response (Fixing the Pydantic Type Errors)
-    # We convert the session dict back into the ExtractedIntelligence Object
+    # 8. Return Response
     intel_obj = ExtractedIntelligence(**session["intelligence"])
 
     return HoneypotResponse(
         status="success",
+        reply= agent_reply or '....',
         scamDetected=session["scamDetected"],
-        
-        # Pass the Object, not the dict
         engagementMetrics=metrics_obj,
-        
-        # Pass the real agent reply
-        generated_reply=agent_reply or "...", 
-        
-        # Pass the Object, not the dict
         extractedIntelligence=intel_obj,
-        
         agentNotes="Engaging target."
     )
