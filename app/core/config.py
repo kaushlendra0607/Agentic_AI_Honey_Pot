@@ -6,7 +6,7 @@ load_dotenv()
 
 # 1. Your API Security (Matches .env MY_SECRET_KEY)
 # We default to None so we know if it's missing
-MY_SECRET_KEY = os.getenv("MY_SECRET_KEY")
+MY_SECRET_KEY = os.getenv("x-api-key")
 
 # 2. External AI Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
