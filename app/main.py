@@ -1,35 +1,46 @@
-import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+import logging
 
-# 1. Load Environment Variables (Best to do this first)
-load_dotenv()
+from app.api.routes import router as honeypot_router
 
-from app.api.routes import router
+# 1. Setup Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("uvicorn.error")
 
-# 2. Initialize App
-app = FastAPI(title="Agentic Honeypot API", version="1.0.0")
+app = FastAPI(title="Agentic Honeypot")
 
-# 3. Add CORS Middleware (CRITICAL for Frontend Integration)
-# allow_origins=["*"] allows ANY website to talk to your bot.
-# This is unsafe for real banks, but PERFECT for hackathons to avoid errors.
+# 2. Add CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 4. Include Routes
-app.include_router(router)
+# 3. THE DEBUGGER
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_details = exc.errors()
+    logger.error(f"❌ VALIDATION ERROR: {error_details}")
+    
+    try:
+        body = await request.json()
+        logger.error(f"📩 RECEIVED BODY: {body}")
+    except:
+        logger.error("Could not read body")
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "env": "loaded"}
+    return JSONResponse(
+        status_code=422,
+        content={"detail": error_details, "body": "Check logs for details"},
+    )
+
+# 4. Include Router
+# ✅ FIX: Use the imported router object directly
+app.include_router(honeypot_router)
 
 if __name__ == "__main__":
     import uvicorn
-    # This allows you to run "python app/main.py" directly
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
