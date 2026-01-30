@@ -1,4 +1,4 @@
-# 🕸️ Agentic AI Honeypot (Team Jarvis)
+# 🕸️ Agentic AI Honeypot (Protocol Jarvis)
 
 > **An autonomous AI security agent that detects scams, engages attackers in multi-turn conversations, extracts intelligence, and reports findings in real-time.**
 
@@ -13,7 +13,7 @@ This project is a REST API built with **FastAPI** and **Llama-3 (via Groq)**. It
 
 ## 🛠️ Tech Stack
 * **Framework:** FastAPI (Python 3.10+)
-* **AI Engine:** Groq API (Llama-3-70b-Versatile)
+* **AI Engine:** Groq API (Llama-3.1-8b-Instant) - Optimized for Low Latency
 * **Validation:** Pydantic V2 (Strict Schema Compliance)
 * **Intelligence:** Custom Regex Engine (International & Local formats)
 * **Deployment:** Render / Uvicorn
