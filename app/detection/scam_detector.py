@@ -37,11 +37,16 @@ def detect_scam(text: str):
         return True, hits
 
     try:
-        response_text = llm.generate(
+        raw_response = llm.generate(
             system_prompt="You are a scam detector. Reply ONLY with 'TRUE' or 'FALSE'.",
             user_prompt=f"Analyze this message for scam intent: '{text}'",
             provider="groq" # You can use "gemini" here explicitly if you want specific efficiency
-        ).strip().upper()
+        )
+        
+        if raw_response:
+            response_text = raw_response.strip().upper()
+        else:
+            response_text = "FALSE"
 
         if "TRUE" in response_text:
             return True, ["AI_Context_Analysis"]

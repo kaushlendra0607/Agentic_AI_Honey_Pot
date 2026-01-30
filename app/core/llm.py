@@ -1,56 +1,66 @@
+# app/core/llm.py
+# | Model ID                                  | RPM | RPD   | TPM | TPD  | Notes                                                       |
+# | ----------------------------------------- | --- | ----- | --- | ---- | ----------------------------------------------------------- |
+# | llama-3.1-8b-instant                      | 30  | 14.4K | 6K  | 500K | Fastest small model, ideal for quick tasks browseroperator​ |
+# | llama-3.3-70b-versatile                   | 30  | 1K    | 12K | 100K | High-quality large model, 276+ t/s benchmark groq​          |
+# | llama-4-scout-17b-16e-instruct, no access | 30  | 1K    | 30K | 500K | Newer Llama 4 variant, strong speed groq​                   |
+
 import os
-from google import genai
+import random
 from groq import Groq
-from dotenv import load_dotenv
 
-load_dotenv()
-
-class LLMClient:
+class LLMService:
     def __init__(self):
-        # Initialize both clients once
-        self.gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        # 1. Initialize Clients for Both Keys
+        # Ensure GROQ_API_KEY and GROQ_API_KEY2 are in your .env
+        self.clients = [
+            Groq(api_key=os.getenv("GROQ_API_KEY"), max_retries=0),
+            Groq(api_key=os.getenv("GROQ_API_KEY2"), max_retries=0)
+        ]
+
+        # 2. Set Model (Fastest)
+        self.model = "llama-3.1-8b-instant" 
+
+    def generate(self, system_prompt, user_prompt, provider="groq"):
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
-        # Default Config
-        self.gemini_model = "gemini-2.5-flash-lite"
-        self.groq_model = "llama-3.3-70b-versatile" # or "llama3-70b-8192"
+        # 🎲 STEP 1: PICK A RANDOM KEY (The Coin Flip)
+        first_choice = random.choice(self.clients)
+        
+        # Define the backup (The one we didn't pick)
+        backup_choice = self.clients[1] if first_choice == self.clients[0] else self.clients[0]
 
-    def generate(self, system_prompt: str, user_prompt: str, provider: str = "groq"):
-        """
-        Unified method to call either Groq or Gemini.
-        provider: "groq" or "gemini"
-        """
+        # --- ATTEMPT 1: Primary (Random) ---
         try:
-            if provider == "groq":
-                return self._call_groq(system_prompt, user_prompt)
-            elif provider == "gemini":
-                return self._call_gemini(system_prompt, user_prompt)
-            else:
-                return "Error: Unknown provider selected."
+            return self._call_groq(first_choice, messages)
+            
         except Exception as e:
-            print(f"⚠️ {provider.upper()} Error: {e}")
-            return "I am clicking the button but nothing is happening... wait."
+            # ⚠️ If Random Choice fails, switch to Backup immediately
+            print(f"⚠️ Primary Key Failed ({e}). Switching to Backup... 🔄")
+            try:
+                # --- ATTEMPT 2: The Other Key ---
+                return self._call_groq(backup_choice, messages)
+            except Exception as e2:
+                print(f"❌ CRITICAL: Both Keys Exhausted. {e2}")
+                # Fallback string so the app never crashes
+                return "I am having a bit of trouble hearing you, dear. Can you repeat that?"
 
-    def _call_groq(self, system_prompt, user_prompt):
-        chat_completion = self.groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            model=self.groq_model,
+    def _call_groq(self, client, messages):
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
             temperature=0.7,
-            max_tokens=200
+            max_tokens=400,
+            timeout=5.0 
         )
-        return (chat_completion.choices[0].message.content or "").strip()
+        
+        # 🛡️ SAFETY CHECK: Never return None
+        content = response.choices[0].message.content
+        if content:
+            return str(content)
+        return "" # Return empty string instead of None to prevent .strip() crashes
 
-    def _call_gemini(self, system_prompt, user_prompt):
-        # Gemini 2026 Syntax
-        full_prompt = f"{system_prompt}\n\nUSER SAYS:\n{user_prompt}"
-        response = self.gemini_client.models.generate_content(
-            model=self.gemini_model, 
-            contents=full_prompt
-        )
-        return (response.text or "").strip()
-
-# Create a singleton instance to use everywhere
-llm = LLMClient()
+llm = LLMService()

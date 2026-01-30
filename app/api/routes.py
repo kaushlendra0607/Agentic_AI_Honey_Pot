@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from datetime import datetime, timezone
 import httpx  # <--- ✅ Switched to Async HTTP Client
 import time   # <--- ✅ Added for Performance Timing
@@ -16,6 +16,23 @@ from app.agent.agent import generate_agent_reply
 from app.intelligence.extractor import extract_intelligence
 
 router = APIRouter()
+
+async def send_guvi_callback(payload: dict):
+    """
+    Runs in the background. Does not block the main response.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            # We can safely set a long timeout here (e.g., 30s)
+            # because the user is NOT waiting for this!
+            await client.post(
+                "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
+                json=payload,
+                timeout=20.0 
+            )
+        # print("✅ Callback sent in background.") # Optional logging
+    except Exception as e:
+        print(f"⚠️ Background Callback Failed: {e}")
 
 # --- HELPER FUNCTION: Smart Notes ---
 def generate_agent_notes(intel):
@@ -41,7 +58,7 @@ def generate_agent_notes(intel):
     response_model=HoneypotResponse, 
     dependencies=[Depends(verify_api_key)]
 )
-async def honeypot_endpoint(payload: HoneypotRequest):
+async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: BackgroundTasks):
     # ⏱️ START TIMER
     start_time = time.perf_counter()
 
@@ -88,25 +105,17 @@ async def honeypot_endpoint(payload: HoneypotRequest):
     final_notes = generate_agent_notes(session["intelligence"])
 
     # 8. MANDATORY CALLBACK (Async & Non-Blocking)
-    try:
-        if session.get("scamDetected"):
-            guvi_payload = {
-                "sessionId": payload.sessionId,
-                "scamDetected": True,
-                "totalMessagesExchanged": session["messageCount"],
-                "extractedIntelligence": session["intelligence"],
-                "agentNotes": final_notes
-            }
-            
-            # ✅ FIX: Use httpx.AsyncClient for non-blocking I/O
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
-                    json=guvi_payload,
-                    timeout=5.0
-                )
-    except Exception as e:
-        print(f"Callback Failed (Non-fatal): {e}")
+    if session.get("scamDetected"):
+        guvi_payload = {
+            "sessionId": payload.sessionId,
+            "scamDetected": True,
+            "totalMessagesExchanged": session["messageCount"],
+            "extractedIntelligence": session["intelligence"], 
+            "agentNotes": final_notes
+        }
+        
+        # ✅ THE MAGIC: Schedule this to run AFTER return
+        background_tasks.add_task(send_guvi_callback, guvi_payload)
 
     # 9. Prepare Response
     intel_obj = ExtractedIntelligence(**session["intelligence"])
