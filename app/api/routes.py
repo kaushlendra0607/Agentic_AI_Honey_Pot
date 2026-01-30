@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from datetime import datetime, timezone
-import requests  # <--- Added this
+import httpx  # <--- ✅ Switched to Async HTTP Client
+import time   # <--- ✅ Added for Performance Timing
 
 from app.models.schemas import (
     HoneypotRequest, 
@@ -25,7 +26,6 @@ def generate_agent_notes(intel):
     if intel.get("phishingLinks"): notes.append("Sent Phishing Link.")
     if intel.get("phoneNumbers"): notes.append("Shared Phone Number.")
     
-    # Check suspicious keywords for specifics
     keywords = str(intel.get("suspiciousKeywords", []))
     if "GiftCard" in keywords: notes.append("Demanded Gift Cards.")
     if "Crypto" in keywords: notes.append("Demanded Crypto (BTC/ETH).")
@@ -42,17 +42,20 @@ def generate_agent_notes(intel):
     dependencies=[Depends(verify_api_key)]
 )
 async def honeypot_endpoint(payload: HoneypotRequest):
+    # ⏱️ START TIMER
+    start_time = time.perf_counter()
+
     # 1. Get Session
     session = get_or_create_session(payload.sessionId)
+    incoming_history = payload.conversationHistory or []
 
-    # If our memory is empty but they sent history, restore it.
-    if len(session["messages"]) == 0 and len(payload.conversationHistory) > 0:
-        for old_msg in payload.conversationHistory:
-            session["messages"].append(old_msg.dict())
-        session["messageCount"] = len(payload.conversationHistory)
+    if len(session["messages"]) == 0 and len(incoming_history) > 0:
+        for old_msg in incoming_history:
+            session["messages"].append(old_msg.model_dump())
+        session["messageCount"] = len(incoming_history)
 
     # 2. Add the New Message
-    session["messages"].append(payload.message.dict())
+    session["messages"].append(payload.message.model_dump())
     session["messageCount"] += 1
     session["last_user_message"] = payload.message.text
 
@@ -78,35 +81,40 @@ async def honeypot_endpoint(payload: HoneypotRequest):
         totalMessagesExchanged=session["messageCount"]
     )
 
-    # 6. Generate Agent Reply (ALWAYS REPLY)
+    # 6. Generate Agent Reply (The Heavy Lifter)
     agent_reply = generate_agent_reply(session)
 
     # 7. Generate Dynamic Notes
     final_notes = generate_agent_notes(session["intelligence"])
 
-    # 8. MANDATORY CALLBACK (Section 12 Compliance)
-    # We send this every time we detect a scam to ensure the dashboard is live-updated.
+    # 8. MANDATORY CALLBACK (Async & Non-Blocking)
     try:
         if session.get("scamDetected"):
             guvi_payload = {
-                "sessionId": payload.sessionId,  # Fixed variable name
+                "sessionId": payload.sessionId,
                 "scamDetected": True,
                 "totalMessagesExchanged": session["messageCount"],
-                "extractedIntelligence": session["intelligence"], # Sending raw dict
-                "agentNotes": final_notes  # Sending smart notes
+                "extractedIntelligence": session["intelligence"],
+                "agentNotes": final_notes
             }
             
-            # Send to Guvi (with 5s deadline)
-            requests.post(
-                "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
-                json=guvi_payload,
-                timeout=5 
-            )
+            # ✅ FIX: Use httpx.AsyncClient for non-blocking I/O
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
+                    json=guvi_payload,
+                    timeout=5.0
+                )
     except Exception as e:
         print(f"Callback Failed (Non-fatal): {e}")
 
-    # 9. Return Response (Section 8 + 3 Compliance)
+    # 9. Prepare Response
     intel_obj = ExtractedIntelligence(**session["intelligence"])
+
+    # ⏱️ END TIMER & PRINT
+    end_time = time.perf_counter()
+    total_latency = end_time - start_time
+    print(f"⏱️ [PERFORMANCE] Total Cycle Time: {total_latency:.4f} seconds")
 
     return HoneypotResponse(
         status="success",
@@ -114,5 +122,5 @@ async def honeypot_endpoint(payload: HoneypotRequest):
         scamDetected=session["scamDetected"],
         engagementMetrics=metrics_obj,
         extractedIntelligence=intel_obj,
-        agentNotes=final_notes  # <--- Using the smart notes here too
+        agentNotes=final_notes
     )
