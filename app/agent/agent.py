@@ -1,16 +1,17 @@
 import os
+import re # <--- ✅ NEW IMPORT
 from dotenv import load_dotenv
 from app.core.llm import llm
-from app.agent.prompts import get_active_system_prompt # OR get_persona_system_instruction if that's what you use
+from app.agent.prompts import get_active_system_prompt
 
 load_dotenv()
 ACTIVE_PROVIDER = "groq"
 
 def generate_agent_reply(session):
     """
-    Generates a reply by analyzing the ENTIRE history to prevent repeating ANY past excuses.
+    Generates a reply and CLEANS it of any AI artifacts.
     """
-    # 1. Get Context & Intel
+    # 1. Get Context
     intel = session.get("intelligence", {})
     user_message = session.get("last_user_message", "")
     
@@ -20,19 +21,16 @@ def generate_agent_reply(session):
     keywords_str = str(intel.get("suspiciousKeywords", []))
     has_crypto = "Crypto" in keywords_str
     
-    # 2. Format History (Last 5 messages) WITH TRUNCATION
-    # ✂️ OPTIMIZATION: Take last 5 messages, but CAP them at 200 chars each.
-    # This ensures 5 messages never exceed ~300 tokens total.
-    recent_messages = session.get("messages", [])[-5:]
+    # 2. Format History (Truncated)
+    recent_messages = session.get("messages", [])[-3:]
     history_text = ""
     for msg in recent_messages:
         role = "SCAMMER" if msg['sender'] == 'scammer' else "USER"
-        clean_text = str(msg['text'])[:400]
-        if len(str(msg['text'])) > 400:
-            clean_text += "..."
+        clean_text = str(msg['text'])[:300]
+        if len(str(msg['text'])) > 300: clean_text += "..."
         history_text += f"{role}: {clean_text}\n"
 
-    # 3. CALCULATE TACTICAL DIRECTIVE
+    # 3. Strategy
     if has_link and not (has_upi or has_bank or has_crypto):
         tactical_directive = (
             "STATUS: They sent a Phishing Link. ACTION: Lie. Say link isn't opening (404 Error) etc, make excuses."
@@ -46,23 +44,32 @@ def generate_agent_reply(session):
     else:
         tactical_directive = "STATUS: No details. ACTION: Act eager. Ask for UPI/Bank details."
 
-    # 4. User Prompt
+    # 4. Prompt
     final_user_prompt = (
         f"=>HISTORY\n{history_text}\n"
         f"=>NEW MSG\n{user_message}\n"
         f"=>INSTRUCTIONS\n"
         f"STRATEGY: {tactical_directive}\n"
-        f"ANTI-REPETITION: Do not use previous excuses. Invent new ones.\n"
-        f"REPLY (Short, Confused, Human):"
+        f"DO NOT include headers like 'User Response:' or '=>REPLY'. Just speak.\n"
+        f"REPLY:"
     )
 
     # 5. System Prompt
-    # Make sure your imports match where this function actually is
     dynamic_system_prompt = get_active_system_prompt(session_context=session)
 
     # 6. Call LLM
-    return llm.generate(
+    raw_reply = llm.generate(
         system_prompt=dynamic_system_prompt, 
         user_prompt=final_user_prompt, 
         provider=ACTIVE_PROVIDER
     )
+
+    # 🧼 7. CLEAN THE OUTPUT (Crucial Fix)
+    # This regex removes "**Arthur's Response**", "=>REPLY", "REPLY:", and quotes.
+    clean_reply = re.sub(r"^(User Response:|Arthur's Response:|=>REPLY|REPLY:|\*\*REPLY\*\*)", "", raw_reply, flags=re.IGNORECASE).strip()
+    
+    # Remove leading/trailing quotes if the AI added them
+    if clean_reply.startswith('"') and clean_reply.endswith('"'):
+        clean_reply = clean_reply[1:-1]
+
+    return clean_reply
