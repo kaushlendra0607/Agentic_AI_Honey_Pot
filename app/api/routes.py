@@ -31,7 +31,7 @@ async def send_guvi_callback(payload: dict):
             response = await client.post(
                 target_url,
                 json=payload,
-                timeout=20.0 
+                timeout=10.0 
             )
             # Only print if it fails or succeeds
             if response.status_code == 200:
@@ -124,7 +124,7 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
 
     # 🛑 HUMAN DELAY (User Requested Fix)
     # This prevents the "Too Fast" error on the tester
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(0.5)
 
     # 8. Return
     return HoneypotResponse(
