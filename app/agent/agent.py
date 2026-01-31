@@ -27,7 +27,10 @@ def generate_agent_reply(session):
     history_text = ""
     for msg in recent_messages:
         role = "SCAMMER" if msg['sender'] == 'scammer' else "USER"
-        history_text += f"{role}: {msg['text']}\n"
+        clean_text = str(msg['text'])[:400]
+        if len(str(msg['text'])) > 400:
+            clean_text += "..."
+        history_text += f"{role}: {clean_text}\n"
 
     # 3. CALCULATE TACTICAL DIRECTIVE
     if has_link and not (has_upi or has_bank or has_crypto):

@@ -19,17 +19,33 @@ router = APIRouter()
 async def send_guvi_callback(payload: dict):
     """
     Sends the FINAL RESULT to Guvi. 
+    Now includes Debug Logging to see if Guvi accepts/rejects the data.
     """
+    target_url = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
+    
+    # 🔍 DEBUG: Print exactly what we are sending
+    # This helps verify you aren't sending empty data
+    print(f"📤 [CALLBACK] Sending Payload: {payload}")
+
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
-                "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
+            response = await client.post(
+                target_url,
                 json=payload,
                 timeout=20.0 
             )
-            # print("✅ Intel sent to Guvi HQ.")
+            
+            # ✅ CRITICAL CHECK
+            if response.status_code == 200:
+                print(f"✅ GUVI ACCEPTED DATA: {response.text}")
+            elif response.status_code == 422:
+                # This is the most common error: Schema Mismatch
+                print(f"❌ GUVI REJECTED (Schema Error): {response.text}")
+            else:
+                print(f"⚠️ GUVI STATUS {response.status_code}: {response.text}")
+
     except Exception as e:
-        print(f"⚠️ Callback Error: {e}")
+        print(f"⚠️ Callback Network Error: {e}")
 
 def generate_agent_notes(intel):
     """Generates the 'agentNotes' string for the callback."""
