@@ -1,14 +1,10 @@
 import os
 from dotenv import load_dotenv
 from app.core.llm import llm
-
-# ✅ CHANGE: Import the function, not the variable
-from app.agent.prompts import get_active_system_prompt
+from app.agent.prompts import get_active_system_prompt # OR get_persona_system_instruction if that's what you use
 
 load_dotenv()
-
-# TOGGLE THIS TO SWITCH REPLY MODEL
-ACTIVE_PROVIDER = "groq"  # Options: "groq", "gemini"
+ACTIVE_PROVIDER = "groq"
 
 def generate_agent_reply(session):
     """
@@ -24,7 +20,9 @@ def generate_agent_reply(session):
     keywords_str = str(intel.get("suspiciousKeywords", []))
     has_crypto = "Crypto" in keywords_str
     
-    # 2. Format History (Last 10 messages)
+    # 2. Format History (Last 5 messages) WITH TRUNCATION
+    # ✂️ OPTIMIZATION: Take last 5 messages, but CAP them at 200 chars each.
+    # This ensures 5 messages never exceed ~300 tokens total.
     recent_messages = session.get("messages", [])[-5:]
     history_text = ""
     for msg in recent_messages:
@@ -34,9 +32,8 @@ def generate_agent_reply(session):
     # 3. CALCULATE TACTICAL DIRECTIVE
     if has_link and not (has_upi or has_bank or has_crypto):
         tactical_directive = (
-            "STATUS: They sent a Phishing Link.\n"
-            "ACTION: Lie. Say the link isn't opening (e.g., 'Server Not Found', '404 Error' etc. Make excuses creatively, these are just some examples). "
-            "Force them to give a Bank Account or UPI instead."
+            "STATUS: They sent a Phishing Link. ACTION: Lie. Say link isn't opening (404 Error) etc, make excuses."
+            "Force them to give Bank/UPI."
         )
     elif has_upi or has_bank or has_crypto:
         tactical_directive = (
@@ -44,35 +41,23 @@ def generate_agent_reply(session):
             "ACTION: STALL INDEFINITELY. Invent a new technical failure to explain why you haven't sent money yet. Try to extract more details but must not ask for any detail again which has already been dropped by scammer."
         )
     else:
-        tactical_directive = (
-            "STATUS: No payment details yet.\n"
-            "ACTION: Act eager to pay. Ask for UPI ID or Bank Details."
-        )
+        tactical_directive = "STATUS: No details. ACTION: Act eager. Ask for UPI/Bank details."
 
-    # 4. The "Global History" User Prompt
+    # 4. User Prompt
     final_user_prompt = (
-        f"--- CONVERSATION HISTORY ---\n{history_text}\n"
-        f"----------------------------\n"
-        f"CURRENT SCAMMER MESSAGE: {user_message}\n\n"
-        f"--- INSTRUCTIONS ---\n"
-        f"1. STRATEGY: {tactical_directive}\n"
-        f"2. GLOBAL ANTI-REPETITION: Read the 'USER' messages in the history above. "
-        f"List the excuses USER has ALREADY used. DO NOT use them again.\n"
-        f"DO NOT use those specific excuses again. Invent a NEW problem as conversation demands.\n"
-        f"3. PERSONA: Keep it short, confused, and polite.\n\n"
-        f"OUTPUT RULES: \n"
-        f"1. Reply ONLY with the spoken text.\n"
-        f"2. DO NOT include headers like 'User Response:' or '**Reasoning**'.\n"
-        f"3. DO NOT use quotes around the message.\n\n"
-        f"4. Chat as normal humans chat with each other, you are not reporting giving a presentation or something."
-        f"REPLY:"
+        f"=>HISTORY\n{history_text}\n"
+        f"=>NEW MSG\n{user_message}\n"
+        f"=>INSTRUCTIONS\n"
+        f"STRATEGY: {tactical_directive}\n"
+        f"ANTI-REPETITION: Do not use previous excuses. Invent new ones.\n"
+        f"REPLY (Short, Confused, Human):"
     )
 
-    # 5. GENERATE SYSTEM PROMPT (The "Time Cost" Step)
-    # This runs every time. If Strategy is "AI_GENERATED", this takes ~1.5s.
+    # 5. System Prompt
+    # Make sure your imports match where this function actually is
     dynamic_system_prompt = get_active_system_prompt(session_context=session)
 
-    # 6. Call the LLM for the final reply
+    # 6. Call LLM
     return llm.generate(
         system_prompt=dynamic_system_prompt, 
         user_prompt=final_user_prompt, 
