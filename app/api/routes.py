@@ -1,8 +1,7 @@
 # app/api/routes.py
 from fastapi import APIRouter, Depends, BackgroundTasks
-from datetime import datetime, timezone
 import httpx 
-import time
+import time # <--- ✅ Used for Performance Timer
 
 from app.models.schemas import (
     HoneypotRequest, 
@@ -20,7 +19,6 @@ router = APIRouter()
 async def send_guvi_callback(payload: dict):
     """
     Sends the FINAL RESULT to Guvi. 
-    This is where the Intelligence goes.
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -44,6 +42,7 @@ def generate_agent_notes(intel):
     keywords = str(intel.get("suspiciousKeywords", []))
     if "GiftCard" in keywords: notes.append("Demanded Gift Cards.")
     if "Crypto" in keywords: notes.append("Demanded Crypto.")
+    if "App-Detected" in keywords: notes.append("Attempted Remote Access.")
     
     if not notes: return "Scam detected, engaging."
     return "Scammer behavior identified: " + " ".join(notes)
@@ -54,6 +53,9 @@ def generate_agent_notes(intel):
     dependencies=[Depends(verify_api_key)]
 )
 async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: BackgroundTasks):
+    # ⏱️ START TIMER
+    start_cpu = time.perf_counter()
+
     # 1. Get Session
     session = get_or_create_session(payload.sessionId)
     
@@ -94,18 +96,21 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
     final_notes = generate_agent_notes(session["intelligence"])
     
     if session.get("scamDetected"):
-        # This payload matches the "Example Implementation" in your docs exactly
         guvi_payload = {
             "sessionId": payload.sessionId,
             "scamDetected": True,
             "totalMessagesExchanged": session["messageCount"],
-            "extractedIntelligence": session["intelligence"], # CamelCase from extractor
+            "extractedIntelligence": session["intelligence"],
             "agentNotes": final_notes
         }
         background_tasks.add_task(send_guvi_callback, guvi_payload)
 
     # 7. Save Session
     save_session(payload.sessionId, session)
+
+    # ⏱️ END TIMER
+    end_cpu = time.perf_counter()
+    print(f"⏱️ [PERFORMANCE] Total Cycle Time: {end_cpu - start_cpu:.4f} seconds")
 
     # 8. RETURN ONLY STATUS & REPLY (Section 8 Compliance)
     return HoneypotResponse(
