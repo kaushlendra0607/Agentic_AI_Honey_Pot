@@ -25,7 +25,7 @@ def generate_agent_reply(session):
     has_crypto = "Crypto" in keywords_str
     
     # 2. Format History (Last 10 messages)
-    recent_messages = session.get("messages", [])[-6:]
+    recent_messages = session.get("messages", [])[-5:]
     history_text = ""
     for msg in recent_messages:
         role = "SCAMMER" if msg['sender'] == 'scammer' else "USER"
