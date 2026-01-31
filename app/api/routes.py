@@ -1,7 +1,8 @@
 # app/api/routes.py
 from fastapi import APIRouter, Depends, BackgroundTasks
 import httpx 
-import time # <--- ✅ Used for Performance Timer
+import time
+import asyncio # <--- ✅ NEW IMPORT
 
 from app.models.schemas import (
     HoneypotRequest, 
@@ -15,16 +16,14 @@ from app.intelligence.extractor import extract_intelligence
 
 router = APIRouter()
 
-# --- CALLBACK LOGIC (SECTION 12) ---
+# --- CALLBACK LOGIC ---
 async def send_guvi_callback(payload: dict):
     """
-    Sends the FINAL RESULT to Guvi. 
-    Now includes Debug Logging to see if Guvi accepts/rejects the data.
+    Sends the FINAL RESULT to Guvi with Debug Logs.
     """
     target_url = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
     
-    # 🔍 DEBUG: Print exactly what we are sending
-    # This helps verify you aren't sending empty data
+    # Debug Log
     print(f"📤 [CALLBACK] Sending Payload: {payload}")
 
     try:
@@ -34,8 +33,7 @@ async def send_guvi_callback(payload: dict):
                 json=payload,
                 timeout=20.0 
             )
-            
-            # ✅ CRITICAL CHECK
+            # Only print if it fails or succeeds
             if response.status_code == 200:
                 print(f"✅ GUVI ACCEPTED DATA: {response.text}")
             elif response.status_code == 422:
@@ -69,7 +67,6 @@ def generate_agent_notes(intel):
     dependencies=[Depends(verify_api_key)]
 )
 async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: BackgroundTasks):
-    # ⏱️ START TIMER
     start_cpu = time.perf_counter()
 
     # 1. Get Session
@@ -98,7 +95,6 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
 
     # 4. Extract Intelligence
     intel = extract_intelligence(payload.message.text)
-    # Merge Logic
     for key, values in intel.items():
         if key in session["intelligence"]:
             for value in values:
@@ -108,9 +104,8 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
     # 5. Generate Reply
     agent_reply = generate_agent_reply(session)
     
-    # 6. Prepare Callback Data (Section 12 Compliance)
+    # 6. Callback
     final_notes = generate_agent_notes(session["intelligence"])
-    
     if session.get("scamDetected"):
         guvi_payload = {
             "sessionId": payload.sessionId,
@@ -124,11 +119,14 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
     # 7. Save Session
     save_session(payload.sessionId, session)
 
-    # ⏱️ END TIMER
     end_cpu = time.perf_counter()
-    print(f"⏱️ [PERFORMANCE] Total Cycle Time: {end_cpu - start_cpu:.4f} seconds")
+    print(f"⏱️ [SPEED] Logic took {end_cpu - start_cpu:.4f}s. Sleeping for 2s... 💤")
 
-    # 8. RETURN ONLY STATUS & REPLY (Section 8 Compliance)
+    # 🛑 HUMAN DELAY (User Requested Fix)
+    # This prevents the "Too Fast" error on the tester
+    await asyncio.sleep(2.0)
+
+    # 8. Return
     return HoneypotResponse(
         status="success",
         reply=agent_reply or "..."
