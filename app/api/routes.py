@@ -1,57 +1,52 @@
+# app/api/routes.py
 from fastapi import APIRouter, Depends, BackgroundTasks
 from datetime import datetime, timezone
-import httpx  # <--- ✅ Switched to Async HTTP Client
-import time   # <--- ✅ Added for Performance Timing
+import httpx 
+import time
 
 from app.models.schemas import (
     HoneypotRequest, 
-    HoneypotResponse, 
-    EngagementMetrics, 
-    ExtractedIntelligence
+    HoneypotResponse
 )
 from app.core.auth import verify_api_key
-from app.core.session import get_or_create_session
+from app.core.session import get_or_create_session, save_session 
 from app.detection.scam_detector import detect_scam
 from app.agent.agent import generate_agent_reply
 from app.intelligence.extractor import extract_intelligence
 
 router = APIRouter()
 
+# --- CALLBACK LOGIC (SECTION 12) ---
 async def send_guvi_callback(payload: dict):
     """
-    Runs in the background. Does not block the main response.
+    Sends the FINAL RESULT to Guvi. 
+    This is where the Intelligence goes.
     """
     try:
         async with httpx.AsyncClient() as client:
-            # We can safely set a long timeout here (e.g., 30s)
-            # because the user is NOT waiting for this!
             await client.post(
                 "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
                 json=payload,
                 timeout=20.0 
             )
-        # print("✅ Callback sent in background.") # Optional logging
+            # print("✅ Intel sent to Guvi HQ.")
     except Exception as e:
-        print(f"⚠️ Background Callback Failed: {e}")
+        print(f"⚠️ Callback Error: {e}")
 
-# --- HELPER FUNCTION: Smart Notes ---
 def generate_agent_notes(intel):
-    """Creates a summary based on what was found."""
+    """Generates the 'agentNotes' string for the callback."""
     notes = []
     if intel.get("upiIds"): notes.append("Asked for UPI transfer.")
-    if intel.get("bankAccounts"): notes.append("Provided Bank Account details.")
+    if intel.get("bankAccounts"): notes.append("Provided Bank Account.")
     if intel.get("phishingLinks"): notes.append("Sent Phishing Link.")
     if intel.get("phoneNumbers"): notes.append("Shared Phone Number.")
     
     keywords = str(intel.get("suspiciousKeywords", []))
     if "GiftCard" in keywords: notes.append("Demanded Gift Cards.")
-    if "Crypto" in keywords: notes.append("Demanded Crypto (BTC/ETH).")
-    if "App-Detected" in keywords: notes.append("Attempted Remote Access (AnyDesk/TeamViewer).")
+    if "Crypto" in keywords: notes.append("Demanded Crypto.")
     
-    if not notes:
-        return "Scam detected, engaging in conversation."
+    if not notes: return "Scam detected, engaging."
     return "Scammer behavior identified: " + " ".join(notes)
-
 
 @router.post(
     "/honeypot", 
@@ -59,77 +54,61 @@ def generate_agent_notes(intel):
     dependencies=[Depends(verify_api_key)]
 )
 async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: BackgroundTasks):
-    # ⏱️ START TIMER
-    start_time = time.perf_counter()
-
     # 1. Get Session
     session = get_or_create_session(payload.sessionId)
+    
+    # History Sync
     incoming_history = payload.conversationHistory or []
-
     if len(session["messages"]) == 0 and len(incoming_history) > 0:
         for old_msg in incoming_history:
             session["messages"].append(old_msg.model_dump())
         session["messageCount"] = len(incoming_history)
 
-    # 2. Add the New Message
+    # 2. Add New Message
     session["messages"].append(payload.message.model_dump())
     session["messageCount"] += 1
     session["last_user_message"] = payload.message.text
 
-    # 3. Scam Detection
-    if not session["scamDetected"]:
+    # 3. Detect Scam
+    if not session.get("scamDetected", False):
         is_scam, keywords = detect_scam(payload.message.text)
         if is_scam:
             session["scamDetected"] = True
+            if "suspiciousKeywords" not in session["intelligence"]:
+                session["intelligence"]["suspiciousKeywords"] = []
             session["intelligence"]["suspiciousKeywords"].extend(keywords)
 
     # 4. Extract Intelligence
     intel = extract_intelligence(payload.message.text)
+    # Merge Logic
     for key, values in intel.items():
         if key in session["intelligence"]:
             for value in values:
                 if value not in session["intelligence"][key]:
                     session["intelligence"][key].append(value)
 
-    # 5. Calculate Metrics
-    duration = int((datetime.now(timezone.utc) - session["startTime"]).total_seconds())
-    metrics_obj = EngagementMetrics(
-        engagementDurationSeconds=duration,
-        totalMessagesExchanged=session["messageCount"]
-    )
-
-    # 6. Generate Agent Reply (The Heavy Lifter)
+    # 5. Generate Reply
     agent_reply = generate_agent_reply(session)
-
-    # 7. Generate Dynamic Notes
+    
+    # 6. Prepare Callback Data (Section 12 Compliance)
     final_notes = generate_agent_notes(session["intelligence"])
-
-    # 8. MANDATORY CALLBACK (Async & Non-Blocking)
+    
     if session.get("scamDetected"):
+        # This payload matches the "Example Implementation" in your docs exactly
         guvi_payload = {
             "sessionId": payload.sessionId,
             "scamDetected": True,
             "totalMessagesExchanged": session["messageCount"],
-            "extractedIntelligence": session["intelligence"], 
+            "extractedIntelligence": session["intelligence"], # CamelCase from extractor
             "agentNotes": final_notes
         }
-        
-        # ✅ THE MAGIC: Schedule this to run AFTER return
         background_tasks.add_task(send_guvi_callback, guvi_payload)
 
-    # 9. Prepare Response
-    intel_obj = ExtractedIntelligence(**session["intelligence"])
+    # 7. Save Session
+    save_session(payload.sessionId, session)
 
-    # ⏱️ END TIMER & PRINT
-    end_time = time.perf_counter()
-    total_latency = end_time - start_time
-    print(f"⏱️ [PERFORMANCE] Total Cycle Time: {total_latency:.4f} seconds")
-
+    # 8. RETURN ONLY STATUS & REPLY (Section 8 Compliance)
     return HoneypotResponse(
         status="success",
-        reply=agent_reply or '....',
-        scamDetected=session["scamDetected"],
-        engagementMetrics=metrics_obj,
-        extractedIntelligence=intel_obj,
-        agentNotes=final_notes
+        reply=agent_reply or "..."
     )

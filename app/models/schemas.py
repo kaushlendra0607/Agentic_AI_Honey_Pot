@@ -105,25 +105,9 @@ class HoneypotRequest(BaseModel):
 class HoneypotResponse(BaseModel):
     status: str = Field(
         ..., 
-        description="API status (Section 8 compliant)."
+        description="Must be 'success'"
     )
     reply: str = Field(
         ..., 
-        description="The AI Agent's response."
-    )
-    scamDetected: Optional[bool] = Field(
-        default=None, 
-        description="True if scam detected."
-    )
-    engagementMetrics: Optional[EngagementMetrics] = Field(
-        default=None, 
-        description="Session metrics."
-    )
-    extractedIntelligence: Optional[ExtractedIntelligence] = Field(
-        default=None, 
-        description="Structured intelligence."
-    )
-    agentNotes: Optional[str] = Field(
-        default=None, 
-        description="Summary of scammer behavior."
+        description="The AI Agent's response text"
     )
