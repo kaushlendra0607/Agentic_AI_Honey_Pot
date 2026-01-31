@@ -41,6 +41,23 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # ✅ FIX: Use the imported router object directly
 app.include_router(honeypot_router)
 
+# --- ✅ NEW: HEALTH CHECKS TO FIX "ACCESS_ERROR" ---
+@app.get("/")
+async def root():
+    """
+    Root endpoint for availability checks.
+    Fixes the 404 error when the tester pings the base URL.
+    """
+    return {"status": "active", "message": "Honeypot is running"}
+
+@app.get("/health")
+async def health_check():
+    """
+    Standard health check endpoint.
+    """
+    return {"status": "ok"}
+# ---------------------------------------------------
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
