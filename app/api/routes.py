@@ -120,11 +120,12 @@ async def honeypot_endpoint(payload: HoneypotRequest, background_tasks: Backgrou
     save_session(payload.sessionId, session)
 
     end_cpu = time.perf_counter()
-    print(f"⏱️ [SPEED] Logic took {end_cpu - start_cpu:.4f}s. Sleeping for 2s... 💤")
+    sleep_time = 0.5
+    print(f"⏱️ [SPEED] Logic took {end_cpu - start_cpu:.4f}s. Sleeping for {sleep_time}s... 💤")
 
     # 🛑 HUMAN DELAY (User Requested Fix)
     # This prevents the "Too Fast" error on the tester
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(sleep_time)
 
     # 8. Return
     return HoneypotResponse(
