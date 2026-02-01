@@ -1,12 +1,11 @@
 import os
-import re  # <--- ✅ NEW IMPORT
+import re
 from dotenv import load_dotenv
 from app.core.llm import llm
 from app.agent.prompts import get_active_system_prompt
 
 load_dotenv()
 ACTIVE_PROVIDER = "groq"
-
 
 def generate_agent_reply(session):
     """
@@ -22,26 +21,29 @@ def generate_agent_reply(session):
     keywords_str = str(intel.get("suspiciousKeywords", []))
     has_crypto = "Crypto" in keywords_str
 
-    # 2. Format History (Truncated)
-    recent_messages = session.get("messages", [])[-3:]
+    # 2. Format History (SMART TRUNCATION) 🧠
+    recent_messages = session.get("messages", [])[-5:]
     history_text = ""
     for msg in recent_messages:
         role = "SCAMMER" if msg["sender"] == "scammer" else "USER"
-        clean_text = str(msg["text"])[:400]
-        if len(str(msg["text"])) > 400:
-            clean_text += "..."
-        history_text += f"{role}: {clean_text}\n"
+        text = str(msg["text"])
+        
+        # ✅ FIX 1: Only chop the AI (USER) messages. 
+        # Keep Scammer messages FULL length so we don't lose data.
+        if role == "USER":
+            if len(text) > 300:
+                text = text[:300] + "..."
+        
+        history_text += f"{role}: {text}\n"
 
     # 3. Strategy
     if has_link and not (has_upi or has_bank or has_crypto):
         tactical_directive = (
-            "STATUS: They sent a Phishing Link. ACTION: Lie. Say link isn't opening (404 Error) etc, make excuses."
-            "Force them to give Bank/UPI."
+            "STATUS: They sent a Phishing Link. ACTION: Lie (404 Error) etc make excuses. Demand Bank/UPI."
         )
     elif has_upi or has_bank or has_crypto:
         tactical_directive = (
-            "STATUS: We have the Payment Details (Mission Success).\n"
-            "ACTION: STALL INDEFINITELY. Invent a new technical failure to explain why you haven't sent money yet. Try to extract more details but must not ask for any detail again which has already been dropped by scammer."
+            "STATUS: Success (Have Payment Details). ACTION: STALL INDEFINITELY. Invent tech failures. Be creative about excuses."
         )
     else:
         tactical_directive = (
@@ -50,11 +52,11 @@ def generate_agent_reply(session):
 
     # 4. Prompt
     final_user_prompt = (
-        f"=>HISTORY\n{history_text}\n"
-        f"=>NEW MSG\n{user_message}\n"
-        f"=>INSTRUCTIONS\n"
+        f"HISTORY:\n{history_text}\n"
+        f"NEW MSG:\n{user_message}\n"
+        f"INSTRUCTIONS:\n"
         f"STRATEGY: {tactical_directive}\n"
-        f"DO NOT include headers like 'User Response:' or '=>REPLY'. Just speak.\n"
+        f"DO NOT include headers like 'User Response:'. Just speak.\n"
         f"REPLY:"
     )
 
@@ -68,8 +70,7 @@ def generate_agent_reply(session):
         provider=ACTIVE_PROVIDER,
     )
 
-    # 🧼 7. CLEAN THE OUTPUT (Crucial Fix)
-    # This regex removes "**Arthur's Response**", "=>REPLY", "REPLY:", and quotes.
+    # 7. CLEAN OUTPUT
     clean_reply = re.sub(
         r"^(User Response\b|Arthur's Response\b|Arthur\b|=>REPLY|REPLY:|\*\*REPLY\*\*)[\s:,-]*",
         "",
@@ -77,7 +78,6 @@ def generate_agent_reply(session):
         flags=re.IGNORECASE,
     ).strip()
 
-    # Final cleanup: Remove quotes if the AI wrapped the whole sentence in them
     if clean_reply.startswith('"') and clean_reply.endswith('"'):
         clean_reply = clean_reply[1:-1]
 
