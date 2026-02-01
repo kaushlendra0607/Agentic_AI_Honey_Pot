@@ -16,7 +16,7 @@ def generate_agent_reply(session):
     user_message = session.get("last_user_message", "")
 
     # 2. Format History (Smart Truncation)
-    recent_messages = session.get("messages", [])[-3:]
+    recent_messages = session.get("messages", [])[-5:]
     history_text = ""
     for msg in recent_messages:
         role = "SCAMMER" if msg["sender"] == "scammer" else "USER"
