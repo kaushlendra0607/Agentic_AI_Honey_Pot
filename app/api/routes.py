@@ -16,35 +16,30 @@ from app.intelligence.extractor import extract_intelligence
 
 router = APIRouter()
 
-# 🕵️ GLOBAL DEBUG VAR (Stores the last payload sent to Guvi for debugging)
+# 🕵️ GLOBAL DEBUG VAR
 _debug_last_payload = {"status": "No data sent yet"}
 
 # --- CALLBACK LOGIC ---
 async def send_guvi_callback(payload: dict):
-    """
-    Sends the FINAL RESULT to Guvi.
-    NOW AWAITED (Blocking) to ensure data reaches Guvi before the test finishes.
-    """
     global _debug_last_payload
-    _debug_last_payload = payload # Update debug var
+    _debug_last_payload = payload 
 
     target_url = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
     
     # Debug Log
-    print(f"📤 [CALLBACK] Sending Payload: {payload}")
+    # print(f"📤 [CALLBACK] Sending Payload: {payload}")
 
     try:
         async with httpx.AsyncClient() as client:
+            # ✅ TIMEOUT OPTIMIZATION: Reduced to 5.0s to prevent hanging
             response = await client.post(
                 target_url,
                 json=payload,
-                timeout=10.0 
+                timeout=5.0 
             )
-            # Only print if it fails or succeeds
             if response.status_code == 200:
-                print(f"✅ GUVI ACCEPTED DATA: {response.text}")
+                print(f"✅ GUVI ACCEPTED DATA")
             elif response.status_code == 422:
-                # This is the most common error: Schema Mismatch
                 print(f"❌ GUVI REJECTED (Schema Error): {response.text}")
             else:
                 print(f"⚠️ GUVI STATUS {response.status_code}: {response.text}")
@@ -53,11 +48,10 @@ async def send_guvi_callback(payload: dict):
         print(f"⚠️ Callback Network Error: {e}")
 
 def generate_agent_notes(intel):
-    """Generates the 'agentNotes' string for the callback."""
     notes = []
-    if intel.get("upiIds"): notes.append("Asked for UPI transfer.")
-    if intel.get("bankAccounts"): notes.append("Provided Bank Account.")
-    if intel.get("phishingLinks"): notes.append("Sent Phishing Link.")
+    if intel.get("upiIds"): notes.append("Asked for UPI.")
+    if intel.get("bankAccounts"): notes.append("Provided Bank Info.")
+    if intel.get("phishingLinks"): notes.append("Sent Link.")
     if intel.get("phoneNumbers"): notes.append("Shared Phone Number.")
     
     keywords = str(intel.get("suspiciousKeywords", []))
@@ -68,17 +62,20 @@ def generate_agent_notes(intel):
     if not notes: return "Scam detected, engaging."
     return "Scammer behavior identified: " + " ".join(notes)
 
-# ✅ ALIASES: Listen on both /honeypot and /h
+# ✅ ALIASES
 @router.post("/honeypot", response_model=HoneypotResponse, dependencies=[Depends(verify_api_key)])
 @router.post("/h", response_model=HoneypotResponse, dependencies=[Depends(verify_api_key)])
-async def honeypot_endpoint(payload: HoneypotRequest): # <--- Removed BackgroundTasks here
+async def honeypot_endpoint(payload: HoneypotRequest): # <--- ✅ CLEAN SIGNATURE (No BackgroundTasks)
     start_cpu = time.perf_counter()
 
     # 1. Get Session
     session = get_or_create_session(payload.sessionId)
     
-    # History Sync
-    incoming_history = payload.conversationHistory or []
+    # History Sync (Safe Handling)
+    incoming_history = payload.conversationHistory
+    if incoming_history is None:
+        incoming_history = []
+        
     if len(session["messages"]) == 0 and len(incoming_history) > 0:
         for old_msg in incoming_history:
             session["messages"].append(old_msg.model_dump())
@@ -110,7 +107,6 @@ async def honeypot_endpoint(payload: HoneypotRequest): # <--- Removed Background
     agent_reply = generate_agent_reply(session)
     
     # 6. Callback (BLOCKING MODE) 🛑
-    # We ensure Guvi has the data BEFORE we reply to the user.
     final_notes = generate_agent_notes(session["intelligence"])
     if session.get("scamDetected"):
         guvi_payload = {
@@ -120,27 +116,30 @@ async def honeypot_endpoint(payload: HoneypotRequest): # <--- Removed Background
             "extractedIntelligence": session["intelligence"],
             "agentNotes": final_notes
         }
-        # ✅ AWAITING THE CALL (No Background Task)
         await send_guvi_callback(guvi_payload)
 
     # 7. Save Session
     save_session(payload.sessionId, session)
 
+    # ⏱️ SMART SLEEP LOGIC
+    # Only sleep if we were too fast. If we were slow (Cold Start), don't sleep!
     end_cpu = time.perf_counter()
-    sleep_time = 0.5
-    print(f"⏱️ [SPEED] Logic took {end_cpu - start_cpu:.4f}s. Sleeping for {sleep_time}s... 💤")
+    processing_time = end_cpu - start_cpu
+    
+    target_time = 1.0 # Minimum time the request should take
+    
+    if processing_time < target_time:
+        sleep_needed = target_time - processing_time
+        print(f"⏱️ [SPEED] Too Fast ({processing_time:.4f}s). Sleeping {sleep_needed:.4f}s...")
+        await asyncio.sleep(sleep_needed)
+    else:
+        print(f"⏱️ [SPEED] Slow Request ({processing_time:.4f}s). No sleep needed.")
 
-    # 🛑 HUMAN DELAY
-    await asyncio.sleep(sleep_time)
-
-    # 8. Return
     return HoneypotResponse(
         status="success",
         reply=agent_reply or "..."
     )
 
-# --- ✅ DEBUG ENDPOINT ---
 @router.get("/debug/guvi-log")
 async def get_last_guvi_data():
-    """Returns the last payload sent to Guvi."""
     return _debug_last_payload
