@@ -1,4 +1,4 @@
-# 🕸️ Agentic AI Honeypot (Protocol Jarvis)
+# 🕸️ Agentic AI Honeypot
 
 > **An autonomous AI security agent that detects scams, engages attackers in multi-turn conversations, extracts intelligence, and reports findings in real-time.**
 
